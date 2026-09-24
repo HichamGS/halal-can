@@ -76,7 +76,9 @@ export interface PlaceListEntry {
   /** DecimalField from DRF arrives as string — normalize via toNumber(). */
   latitude: string | number | null;
   longitude: string | number | null;
-  /** GeoJSON Point from PostGIS (may be absent when location is null). */
+  /** Optional GeoJSON Point (PostGIS). The current list serializer exposes
+   * latitude/longitude only; placeLngLat() prefers `location` when present
+   * and falls back to the decimal fields. */
   location?: GeoJsonPoint | null;
   status: PlaceStatus;
   verification_status: VerificationStatus;
