@@ -1,7 +1,7 @@
-# Python compiled files
-__pycache__/
-*.pyc
+# Dependencies
+node_modules/
 
-# Environment and config (common for Django/Python projects)
+# Environment
 .env
 .env.local
+*.env.*
