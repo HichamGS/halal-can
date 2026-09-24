@@ -38,16 +38,23 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
 
 RUN npm run build
 
-# ---- Stage 2: runtime (nginx serving static + proxy) -----------------------
+# ---- Stage 2: runtime (nginx serving static SPA) ----------------------------
 FROM nginx:1.27-alpine AS runtime
 
-# Production nginx config (SPA fallback + /api, /admin proxy to Django).
+# Built SPA bundle. API/admin reverse-proxying is handled by the edge
+# nginx container (infra/nginx), NOT here — this image only serves statics.
 COPY --from=build /app/dist /usr/share/nginx/html
-# Config file expected to be mounted/baked by compose or infra build context.
-# If not present, the default nginx.conf remains (compose mounts it explicitly).
-COPY --from=build /app/docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+
+# Runtime config renderer: writes /config.json (map style URL etc.) from env
+# so tile settings can change per deployment without rebuilding. Installed as
+# a docker-entrypoint.d step so nginx's stock entrypoint chain still runs
+# (envsubst templates, etc.), then nginx starts via the original CMD.
+COPY docker-entrypoint.sh /etc/docker-entrypoint.env.sh
+RUN chmod +x /etc/docker-entrypoint.env.sh && \
+    printf '#!/bin/sh\n. /etc/docker-entrypoint.env.sh\n' \
+        > /docker-entrypoint.d/05-render-config.sh && \
+    chmod +x /docker-entrypoint.d/05-render-config.sh
 
 EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD wget -qO /dev/null http://localhost/ || exit 1
