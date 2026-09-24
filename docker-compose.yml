@@ -127,7 +127,11 @@ services:
     container_name: maghreb-celery-worker
     volumes:
       - static_data:/app/staticfiles
-    command: celery -A config worker -l info
+    # Concurrency capped at 2 (prefork) + periodic task recycling to keep the
+    # RSS bounded; mem_limit hard-kills the container before the host OOM
+    # killer takes out other services (the Error 137 you saw).
+    command: celery -A config worker -l info --concurrency=2 --max-tasks-per-child=100
+    mem_limit: 512m
     depends_on:
       db:
         condition: service_healthy
@@ -143,6 +147,7 @@ services:
       RUN_MIGRATIONS: "0"
       COLLECT_STATIC: "0"
     command: celery -A config beat -l info
+    mem_limit: 256m
     volumes:
       - beat_data:/app/celerybeat-schedule
     depends_on:

@@ -114,7 +114,7 @@ verify: ## Quick end-to-end smoke checks through nginx
 	@echo "→ API places (via nginx):";  curl -fsS "$(API_URL)/places/?page_size=1" | head -c 200; echo
 	@echo "→ communities:";             curl -fsS "$(API_URL)/communities/" | head -c 200; echo
 	@echo "→ PostGIS extension:";       $(COMPOSE) exec -T db psql -U $${POSTGRES_USER:-maghreb} -d $${POSTGRES_DB:-maghreb_connect} -tAc "SELECT postgis_version();"
-	@echo "→ Celery workers:";          $(COMPOSE) exec -T celery_worker celery -A config inspect ping --timeout 5
+	@echo "→ Celery workers:";          $(COMPOSE) exec -T celery_worker celery -A config inspect ping -d celery@$$($(COMPOSE) exec -T celery_worker hostname) --timeout 5
 	@echo "✓ verification complete"
 
 redis-cli: ## Open redis-cli inside the redis container
