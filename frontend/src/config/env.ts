@@ -17,7 +17,9 @@ const raw = import.meta.env;
  * VITE_MAP_STYLE_URL / MAP_STYLE_URL to a self-hosted or licensed style and
  * MUST NOT rely on the public OSM tile server for traffic.
  * ------------------------------------------------------------------------ */
-const OFFLINE_FALLBACK_STYLE = {
+import type { StyleSpecification } from "maplibre-gl";
+
+const OFFLINE_FALLBACK_STYLE: StyleSpecification = {
   version: 8,
   name: "MC offline fallback",
   sources: {

@@ -62,49 +62,70 @@ const MaghrebMap = forwardRef<MaghrebMapHandle, Props>(function MaghrebMap(
   /* ---- init once ---- */
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: MAP_CONFIG.styleURL,
-      center: [MAP_CONFIG.center.lng, MAP_CONFIG.center.lat],
-      zoom: MAP_CONFIG.zoom,
-      minZoom: MAP_CONFIG.minZoom,
-      maxZoom: MAP_CONFIG.maxZoom,
-    });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
-    map.addControl(
-      new maplibregl.ScaleControl({ unit: "metric" }),
-      "bottom-left"
-    );
-    map.on("load", () => {
-      // GeoJSON source for the optional radius circle (data-driven paint).
-      map.addSource(circleLayerState.current.source, {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
+    let cancelled = false;
+    let map: MapLibreMap | null = null;
+
+    const setupRadiusLayers = (m: MapLibreMap) => {
+      m.on("load", () => {
+        // GeoJSON source for the optional radius circle (data-driven paint).
+        m.addSource(circleLayerState.current.source, {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+        m.addLayer({
+          id: "mc-radius-circle",
+          type: "fill",
+          source: circleLayerState.current.source,
+          paint: {
+            "fill-color": "#0e7c66",
+            "fill-opacity": 0.08,
+          },
+        });
+        m.addLayer({
+          id: "mc-radius-outline",
+          type: "line",
+          source: circleLayerState.current.source,
+          paint: {
+            "line-color": "#0e7c66",
+            "line-width": 1.5,
+            "line-dasharray": [2, 2],
+          },
+        });
+        circleLayerState.current.added = true;
       });
-      map.addLayer({
-        id: "mc-radius-circle",
-        type: "fill",
-        source: circleLayerState.current.source,
-        paint: {
-          "fill-color": "#0e7c66",
-          "fill-opacity": 0.08,
-        },
+    };
+
+    // Style resolution order (spec §18 — tile provider must be swappable):
+    //   runtime /config.json → VITE_MAP_STYLE_URL → remote demo → offline fallback.
+    resolveMapStyle()
+      .then((style) => {
+        if (cancelled || !containerRef.current) return;
+        map = new maplibregl.Map({
+          container: containerRef.current,
+          style,
+          center: [MAP_CONFIG.center.lng, MAP_CONFIG.center.lat],
+          zoom: MAP_CONFIG.zoom,
+          minZoom: MAP_CONFIG.minZoom,
+          maxZoom: MAP_CONFIG.maxZoom,
+        });
+        map.addControl(
+          new maplibregl.NavigationControl({ showCompass: false }),
+          "top-right"
+        );
+        map.addControl(
+          new maplibregl.ScaleControl({ unit: "metric" }),
+          "bottom-left"
+        );
+        setupRadiusLayers(map);
+        mapRef.current = map;
+      })
+      .catch(() => {
+        /* never rejects in practice; offline fallback covers failures */
       });
-      map.addLayer({
-        id: "mc-radius-outline",
-        type: "line",
-        source: circleLayerState.current.source,
-        paint: {
-          "line-color": "#0e7c66",
-          "line-width": 1.5,
-          "line-dasharray": [2, 2],
-        },
-      });
-      circleLayerState.current.added = true;
-    });
-    mapRef.current = map;
+
     return () => {
-      map.remove();
+      cancelled = true;
+      map?.remove();
       mapRef.current = null;
       markersRef.current = [];
     };
