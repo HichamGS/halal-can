@@ -1,0 +1,252 @@
+# ---------------------------------------------------------------------------
+# Maghreb Connect – Docker Compose orchestration
+#
+# Default (production-like) stack:
+#   db, redis, backend (gunicorn), celery_worker, celery_beat,
+#   frontend-static (built SPA), nginx edge proxy on :80.
+#
+# Development: layer docker-compose.dev.yml on top for Vite HMR + Django
+# autoreload:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#   (or simply `make up-dev` / `make up-prod`)
+#
+# All tunables live in .env (copy from .env.example). Never commit secrets.
+# ---------------------------------------------------------------------------
+
+x-backend-env: &backend-env
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+  DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+  DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+  CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  API_PAGE_SIZE: ${API_PAGE_SIZE:-25}
+  THROTTLE_ANON: ${THROTTLE_ANON:-120/min}
+  THROTTLE_USER: ${THROTTLE_USER:-600/min}
+  THROTTLE_SUBMISSION: ${THROTTLE_SUBMISSION:-10/hour}
+  DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME:-admin}
+  DJANGO_SUPERUSER_EMAIL: ${DJANGO_SUPERUSER_EMAIL:-admin@example.com}
+  DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD:-}
+  DB_ENGINE: postgis
+  POSTGRES_DB: ${POSTGRES_DB:-maghreb_connect}
+  POSTGRES_USER: ${POSTGRES_USER:-maghreb}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required (see .env.example)}
+  POSTGRES_HOST: db
+  POSTGRES_PORT: "5432"
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  USE_REDIS_CACHE: ${USE_REDIS_CACHE:-True}
+  CACHE_TTL_PLACES: ${CACHE_TTL_PLACES:-300}
+  CACHE_TTL_PLACE: ${CACHE_TTL_PLACE:-900}
+  CACHE_TTL_TAXONOMY: ${CACHE_TTL_TAXONOMY:-1800}
+  GOOGLE_PLACES_API_KEY: ${GOOGLE_PLACES_API_KEY:-}
+  SEED_ON_FIRST_BOOT: ${SEED_ON_FIRST_BOOT:-0}
+
+x-backend-common: &backend-common
+  build:
+    context: ./backend
+  env_file: .env
+  environment: *backend-env
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    # Ordering contract for the migration race fix (celery_worker
+    # IntegrityError on pg_class_relname_nsp_index): the one-shot `migrate`
+    # service is the ONLY process that runs DDL at startup. Each long-lived
+    # service below adds `migrate: service_completed_successfully` in its own
+    # depends_on block. Do NOT put it in this shared anchor together with a
+    # backend->migrate dependency: that creates a cycle (deadlock).
+
+# One-shot bootstrap: apply migrations BEFORE any long-lived service starts.
+# Guarantees exactly one process ever runs `migrate` against a fresh database.
+x-migrate-once: &migrate-once
+  build:
+    context: ./backend
+  image: maghreb-connect-backend:${IMAGE_TAG:-latest}
+  env_file: .env
+  environment:
+    <<: *backend-env
+    # Entrypoint still waits for PostgreSQL; skip everything else because
+    # collectstatic needs the shared static_data volume owned by `backend`.
+    RUN_MIGRATIONS: "1"
+    COLLECT_STATIC: "0"
+    CREATE_SUPERUSER: "0"
+    SEED_ON_FIRST_BOOT: "0"
+  command: ["true"]   # entrypoint does the work; then exit cleanly
+  restart: "no"
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  # ----------------------------- Data layer --------------------------------
+  # One-shot bootstrap container: the ONLY place migrations run at startup.
+  # Long-lived services set RUN_MIGRATIONS=0, so no two containers ever race
+  # to CREATE the same table/sequence (fixes celery_worker IntegrityError on
+  # pg_class_relname_nsp_index / categories_category_id_seq already exists).
+  migrate:
+    <<: *migrate-once
+    container_name: maghreb-migrate
+
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: maghreb-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-maghreb_connect}
+      POSTGRES_USER: ${POSTGRES_USER:-maghreb}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Host access for psql/QGIS during development. Remove the mapping in
+      # a hardened production deployment (compose internal network only).
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-maghreb} -d ${POSTGRES_DB:-maghreb_connect}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: maghreb-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      # Exposed for local inspection (`redis-cli ping`). Drop in production.
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ------------------------------ Backend ----------------------------------
+  backend:
+    <<: *backend-common
+    container_name: maghreb-backend
+    # Migrations are owned by the one-shot `migrate` service (see top of file).
+    environment:
+      <<: *backend-env
+      RUN_MIGRATIONS: "0"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+    volumes:
+      # Shared volume so nginx can serve files produced by collectstatic.
+      - static_data:/app/staticfiles
+    command:
+      - gunicorn
+      - config.wsgi:application
+      - --bind
+      - "0.0.0.0:8000"
+      - --workers
+      - "3"
+      - --threads
+      - "2"
+      - --timeout
+      - "60"
+      - --access-logfile
+      - "-"
+      - --error-logfile
+      - "-"
+      # world-readable so nginx (uid 101) can serve the shared static volume
+      - --umask
+      - "022"
+
+  # ------------------------- Async task workers -----------------------------
+  celery_worker:
+    <<: *backend-common
+    container_name: maghreb-celery-worker
+    environment:
+      <<: *backend-env
+      RUN_MIGRATIONS: "0"
+      COLLECT_STATIC: "0"
+    volumes:
+      - static_data:/app/staticfiles
+    # Concurrency capped at 2 (prefork) + periodic task recycling to keep the
+    # RSS bounded; mem_limit hard-kills the container before the host OOM
+    # killer takes out other services (the Error 137 you saw).
+    command: celery -A config worker -l info --concurrency=2 --max-tasks-per-child=100
+    mem_limit: 512m
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  celery_beat:
+    <<: *backend-common
+    container_name: maghreb-celery-beat
+    # Beat only schedules; it must not re-run migrations/collectstatic.
+    environment:
+      <<: *backend-env
+      RUN_MIGRATIONS: "0"
+      COLLECT_STATIC: "0"
+      CREATE_SUPERUSER: "0"
+      SEED_ON_FIRST_BOOT: "0"
+    command: celery -A config beat -l info
+    mem_limit: 256m
+    volumes:
+      - beat_data:/app/celerybeat-schedule
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # ------------------------------ Frontend ----------------------------------
+  # Built SPA bundle (nginx serving statics + runtime config.json renderer).
+  frontend-static:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api/v1
+        VITE_MAP_STYLE_URL: ${VITE_MAP_STYLE_URL:-https://demotiles.maplibre.org/style.json}
+        VITE_MAP_CENTER_LNG: ${VITE_MAP_CENTER_LNG:--96.0}
+        VITE_MAP_CENTER_LAT: ${VITE_MAP_CENTER_LAT:-58.0}
+        VITE_MAP_ZOOM: ${VITE_MAP_ZOOM:-3.5}
+    container_name: maghreb-frontend-static
+    restart: unless-stopped
+    expose:
+      - "80"
+
+  # ---------------------------- Edge proxy (prod) ----------------------------
+  nginx:
+    build:
+      context: ./infra/nginx
+    container_name: maghreb-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+    volumes:
+      - static_data:/srv/static:ro   # Django admin static files
+    depends_on:
+      backend:
+        condition: service_started
+      frontend-static:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_data:
+  beat_data:
+  node_modules_dev:

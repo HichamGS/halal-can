@@ -1,0 +1,66 @@
+# ---------------------------------------------------------------------------
+# Maghreb Connect – Docker Compose DEV overrides
+#
+# Layers on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Changes vs. the default (production-like) stack:
+#   * backend  -> `manage.py runserver` with autoreload, source bind-mounted
+#   * celery_worker -> also bind-mounts ./backend so tasks reload with code
+#   * frontend -> Vite dev server (HMR on :5173) instead of the built image;
+#                 its proxy targets http://backend:8000 inside the network
+#   * nginx    -> not used in dev (you hit :5173 and :8000 directly)
+# ---------------------------------------------------------------------------
+
+services:
+  backend:
+    container_name: maghreb-backend-dev
+    ports:
+      # Direct API access during development.
+      - "${BACKEND_HOST_PORT:-8000}:8000"
+    command: python manage.py runserver 0.0.0.0:8000
+    environment:
+      DJANGO_DEBUG: "True"
+      # Migrations stay owned by the one-shot `migrate` service (base file),
+      # even in dev: backend/worker/beat all wait for it via
+      # service_completed_successfully, so nothing may race DDL.
+      RUN_MIGRATIONS: "0"
+      COLLECT_STATIC: "0"
+    volumes:
+      - ./backend:/app        # hot-reload Django source
+      - static_data:/app/staticfiles
+
+  celery_worker:
+    volumes:
+      - ./backend:/app
+    command: celery -A config worker -l info --reload
+
+  celery_beat:
+    volumes:
+      - ./backend:/app
+
+  # Replace the built SPA container with a live Vite dev server.
+  frontend-static:
+    image: node:20-alpine
+    container_name: maghreb-frontend-dev
+    build: ~
+    working_dir: /app
+    user: node
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sh", "-c", "npm install --no-audit --no-fund && npm run dev -- --host 0.0.0.0"]
+    ports:
+      - "${FRONTEND_HOST_PORT:-5173}:5173"
+    environment:
+      # Vite proxies /api -> Django using the compose service name.
+      VITE_API_PROXY_TARGET: http://backend:8000
+      VITE_API_BASE_URL: /api/v1
+      VITE_MAP_STYLE_URL: ${VITE_MAP_STYLE_URL:-https://demotiles.maplibre.org/style.json}
+      VITE_MAP_CENTER_LNG: ${VITE_MAP_CENTER_LNG:--96.0}
+      VITE_MAP_CENTER_LAT: ${VITE_MAP_CENTER_LAT:-58.0}
+      VITE_MAP_ZOOM: ${VITE_MAP_ZOOM:-3.5}
+    volumes:
+      - ./frontend:/app
+      - node_modules_dev:/app/node_modules   # keep host deps out of the container
+
+volumes:
+  node_modules_dev:
