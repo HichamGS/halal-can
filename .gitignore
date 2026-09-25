@@ -1,3 +1,5 @@
 # Compiled/Binary files
 __pycache__/
 *.pyc
+# Local sqlite/spatialite dev database (DB_ENGINE=sqlite)
+*.sqlite3
