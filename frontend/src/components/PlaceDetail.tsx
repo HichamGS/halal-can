@@ -181,8 +181,8 @@ export default function PlaceDetail({ placeId, distanceMeters, onClose }: Props)
               <div className="detail-section">
                 <h3>Data sources</h3>
                 {place.source_references.map((s) => (
-                  <p key={s.source_id} className="source-ref">
-                    Ref: <code>{s.source_id}</code>
+                  <p key={s.external_id} className="source-ref">
+                    Ref: <code>{s.external_id}</code>
                     {s.source_url && (
                       <>
                         {" — "}

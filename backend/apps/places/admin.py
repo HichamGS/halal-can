@@ -1,5 +1,5 @@
 from django.contrib import admin
-from django.contrib.gis.admin import OSMGeoModelAdmin
+from django.contrib.gis.admin import GISModelAdmin
 
 from apps.places.models import (OpeningHours, Place, PlaceFlag,
                                 SourceReference)
@@ -17,7 +17,7 @@ class SourceReferenceInline(admin.TabularInline):
 
 
 @admin.register(Place)
-class PlaceAdmin(OSMGeoModelAdmin):
+class PlaceAdmin(GISModelAdmin):
     """Map widget uses a configurable tile provider (OSM here for admin only;
     production traffic should point clients at a commercial/self-hosted tile
     service – see frontend/src/map/config.ts)."""

@@ -157,8 +157,11 @@ class SourceReference(models.Model):
     """
 
     place = models.ForeignKey(Place, on_delete=models.CASCADE, related_name="source_references")
-    source = models.ForeignKey(Source, on_delete=models.CASCADE, related_name="references")
-    source_id = models.CharField(max_length=255, help_text="Provider-native id, e.g. Google Place ID.")
+    # NOTE: the FK is named `provider` (not `source`) because Django would
+    # otherwise clash it with the auto-created `<field>_id` column of the
+    # provider-native identifier below (models.E006).
+    provider = models.ForeignKey(Source, on_delete=models.CASCADE, related_name="references")
+    external_id = models.CharField(max_length=255, help_text="Provider-native id, e.g. Google Place ID.")
     source_url = models.URLField(max_length=512, blank=True)
     # Only populated when source.storage_policy allows persisting content.
     raw_data = models.JSONField(default=dict, blank=True)
@@ -167,14 +170,14 @@ class SourceReference(models.Model):
     is_active = models.BooleanField(default=True)
 
     class Meta:
-        unique_together = ("source", "source_id")
+        unique_together = ("provider", "external_id")
         indexes = [
-            models.Index(fields=["source", "source_id"]),
+            models.Index(fields=["provider", "external_id"]),
             models.Index(fields=["place"]),
         ]
 
     def __str__(self):
-        return f"{self.source.slug}:{self.source_id}"
+        return f"{self.provider.slug}:{self.external_id}"
 
 
 class OpeningHours(models.Model):

@@ -67,7 +67,7 @@ def ingest_normalized(np_place, source, sync_log=None):
     # provenance: always record the external identity
     if np_place.external_id and source is not None:
         ref, _ = SourceReference.objects.get_or_create(
-            source=source, source_id=str(np_place.external_id),
+            provider=source, external_id=str(np_place.external_id),
             defaults={"place": place, "source_url": np_place.source_url or ""},
         )
         ref.last_checked_at = timezone.now()

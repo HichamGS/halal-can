@@ -14,6 +14,7 @@ import SuggestPlaceDialog from "./components/SuggestPlaceDialog";
 import MaghrebMap, { type MaghrebMapHandle } from "./map/MaghrebMap";
 import { INITIAL_FILTERS, usePlaces, type PlacesFilterState } from "./hooks/usePlaces";
 import type { PlaceListEntry } from "./types";
+import { toCoord } from "./utils/geo";
 
 export default function App() {
   const [filters, setFilters] = useState<PlacesFilterState>(INITIAL_FILTERS);

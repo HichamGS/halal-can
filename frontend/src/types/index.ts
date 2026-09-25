@@ -62,7 +62,7 @@ export interface OpeningHours {
 
 /** External identity only — provider raw data is deliberately not exposed. */
 export interface SourceReference {
-  source_id: string;
+  external_id: string;
   source_url: string | null;
   last_checked_at: string | null;
 }

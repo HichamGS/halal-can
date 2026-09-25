@@ -30,7 +30,7 @@ class SourceReferenceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SourceReference
-        fields = ["source_id", "source_url", "last_checked_at"]
+        fields = ["external_id", "source_url", "last_checked_at"]
 
 
 class PlaceListSerializer(serializers.ModelSerializer):

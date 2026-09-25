@@ -20,7 +20,7 @@ FLAG_THRESHOLD = 0.75
 
 
 def find_source_duplicate(source_id_value: int | str, source) -> Place | None:
-    ref = SourceReference.objects.filter(source=source, source_id=str(source_id_value)).first()
+    ref = SourceReference.objects.filter(provider=source, external_id=str(source_id_value)).first()
     return ref.place if ref else None
 
 
