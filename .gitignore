@@ -1,2 +1,2 @@
-(empty)frontend/dist/
-.verify-tmp/
+# Build artifacts
+frontend/dist/
