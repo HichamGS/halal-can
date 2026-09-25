@@ -21,7 +21,10 @@ services:
     command: python manage.py runserver 0.0.0.0:8000
     environment:
       DJANGO_DEBUG: "True"
-      RUN_MIGRATIONS: "1"     # entrypoint migrates before runserver
+      # Migrations stay owned by the one-shot `migrate` service (base file),
+      # even in dev: backend/worker/beat all wait for it via
+      # service_completed_successfully, so nothing may race DDL.
+      RUN_MIGRATIONS: "0"
       COLLECT_STATIC: "0"
     volumes:
       - ./backend:/app        # hot-reload Django source

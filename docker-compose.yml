@@ -53,9 +53,44 @@ x-backend-common: &backend-common
       condition: service_healthy
     redis:
       condition: service_healthy
+    # Ordering contract for the migration race fix (celery_worker
+    # IntegrityError on pg_class_relname_nsp_index): the one-shot `migrate`
+    # service is the ONLY process that runs DDL at startup. Each long-lived
+    # service below adds `migrate: service_completed_successfully` in its own
+    # depends_on block. Do NOT put it in this shared anchor together with a
+    # backend->migrate dependency: that creates a cycle (deadlock).
+
+# One-shot bootstrap: apply migrations BEFORE any long-lived service starts.
+# Guarantees exactly one process ever runs `migrate` against a fresh database.
+x-migrate-once: &migrate-once
+  build:
+    context: ./backend
+  image: maghreb-connect-backend:${IMAGE_TAG:-latest}
+  env_file: .env
+  environment:
+    <<: *backend-env
+    # Entrypoint still waits for PostgreSQL; skip everything else because
+    # collectstatic needs the shared static_data volume owned by `backend`.
+    RUN_MIGRATIONS: "1"
+    COLLECT_STATIC: "0"
+    CREATE_SUPERUSER: "0"
+    SEED_ON_FIRST_BOOT: "0"
+  command: ["true"]   # entrypoint does the work; then exit cleanly
+  restart: "no"
+  depends_on:
+    db:
+      condition: service_healthy
 
 services:
   # ----------------------------- Data layer --------------------------------
+  # One-shot bootstrap container: the ONLY place migrations run at startup.
+  # Long-lived services set RUN_MIGRATIONS=0, so no two containers ever race
+  # to CREATE the same table/sequence (fixes celery_worker IntegrityError on
+  # pg_class_relname_nsp_index / categories_category_id_seq already exists).
+  migrate:
+    <<: *migrate-once
+    container_name: maghreb-migrate
+
   db:
     image: postgis/postgis:15-3.3
     container_name: maghreb-db
@@ -97,6 +132,17 @@ services:
   backend:
     <<: *backend-common
     container_name: maghreb-backend
+    # Migrations are owned by the one-shot `migrate` service (see top of file).
+    environment:
+      <<: *backend-env
+      RUN_MIGRATIONS: "0"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     expose:
       - "8000"
     volumes:
@@ -125,6 +171,10 @@ services:
   celery_worker:
     <<: *backend-common
     container_name: maghreb-celery-worker
+    environment:
+      <<: *backend-env
+      RUN_MIGRATIONS: "0"
+      COLLECT_STATIC: "0"
     volumes:
       - static_data:/app/staticfiles
     # Concurrency capped at 2 (prefork) + periodic task recycling to keep the
@@ -137,6 +187,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   celery_beat:
     <<: *backend-common
@@ -146,6 +198,8 @@ services:
       <<: *backend-env
       RUN_MIGRATIONS: "0"
       COLLECT_STATIC: "0"
+      CREATE_SUPERUSER: "0"
+      SEED_ON_FIRST_BOOT: "0"
     command: celery -A config beat -l info
     mem_limit: 256m
     volumes:
@@ -155,6 +209,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   # ------------------------------ Frontend ----------------------------------
   # Built SPA bundle (nginx serving statics + runtime config.json renderer).
