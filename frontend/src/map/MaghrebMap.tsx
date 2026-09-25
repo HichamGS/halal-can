@@ -17,7 +17,7 @@ import {
 } from "react";
 import maplibregl, { Map as MapLibreMap, Marker } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { MAP_CONFIG } from "../config/env";
+import { MAP_CONFIG, resolveMapStyle } from "../config/env";
 import type { PlaceListEntry } from "../types";
 import { placeLngLat } from "../utils/geo";
 
